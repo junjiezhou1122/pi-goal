@@ -28,9 +28,8 @@ test("create_goal uses upsert semantics for explicitly requested goals", () => {
 	assert.doesNotMatch(indexSource, /This thread already has a goal/);
 });
 
-test("update_goal remains completion-only in schema and guidance", () => {
+test("update_goal schema and guidance forbid lifecycle side effects", () => {
 	assert.match(indexSource, /name: "update_goal"/);
-	assert.match(indexSource, /enum: \["complete"\]/);
 	assert.match(indexSource, /Do not use update_goal to pause, resume, abandon, or budget-limit a goal/);
 });
 
@@ -38,7 +37,18 @@ test("update_goal runs independent verification before completing", () => {
 	assert.match(indexSource, /runVerifier\(/);
 	assert.match(indexSource, /--no-extensions/);
 	assert.match(indexSource, /Completion REJECTED by an independent verifier/);
-	assert.match(indexSource, /verification rejected completion.*goal paused|goal paused for user review/s);
+	assert.match(indexSource, /paused for user review/);
+});
+
+test("blocked claims are audited and share the verification budget", () => {
+	assert.match(indexSource, /enum: \["complete", "blocked"\]/);
+	assert.match(indexSource, /status=blocked requires a reason/);
+	assert.match(indexSource, /blockedVerifierPrompt\(/);
+	assert.match(indexSource, /\["genuine", "premature"\]/);
+	assert.match(indexSource, /Blocked claim REJECTED by an independent verifier/);
+	assert.match(indexSource, /status: "blocked", verifyRounds: round/);
+	assert.match(goalStateSource, /Treat uncertainty as premature|blocked: "blocked"/);
+	assert.match(indexSource, /status \"blocked\" instead of repeating blocked reports|blocked claims are independently audited/s);
 });
 
 test("verification flags are user-only and absent from create_goal", () => {

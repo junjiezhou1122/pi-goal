@@ -263,3 +263,19 @@ test("parseVerdict normalizes gaps and synthesizes them for bare fails", () => {
 	assert.deepEqual(parseVerdict('{"verdict":"fail"}').gaps, ["Verifier reported fail without gap details."]);
 	assert.deepEqual(parseVerdict('{"verdict":"pass","gaps":null}').gaps, []);
 });
+
+test("parseVerdict accepts extended verdict vocabularies", () => {
+	assert.deepEqual(parseVerdict('{"verdict":"genuine","gaps":[]}', ["genuine", "premature"]), { verdict: "genuine", gaps: [] });
+	assert.deepEqual(parseVerdict('{"verdict":"premature","gaps":["write the report"]}', ["genuine", "premature"]), { verdict: "premature", gaps: ["write the report"] });
+	assert.equal(parseVerdict('{"verdict":"genuine"}', ["pass", "fail"]).verdict, "fail");
+	assert.equal(parseVerdict('{"verdict":"pass"}', ["genuine", "premature"]).verdict, "fail");
+	assert.equal(parseVerdict('{"verdict":"fail","gaps":["x"]}', ["genuine", "premature"]).verdict, "fail");
+});
+
+test("statusLine covers blocked goals", () => {
+	assert.equal(statusLine({ status: "blocked", tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 5 }), "Goal blocked (/goal clear or /goal resume)");
+});
+
+test("goalEventStatus maps blocked to a display label", () => {
+	assert.equal(goalEventStatus("blocked"), "blocked");
+});

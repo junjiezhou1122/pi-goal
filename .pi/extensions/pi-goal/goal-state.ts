@@ -1,4 +1,4 @@
-export type GoalStatus = "active" | "paused" | "budget_limited" | "complete";
+export type GoalStatus = "active" | "paused" | "budget_limited" | "complete" | "blocked";
 
 // Verification strength for the independent completion verifier.
 // Only the user can configure this (via /goal flags); the model cannot.
@@ -24,12 +24,15 @@ export type GoalState = {
 	verify?: GoalVerifyConfig;
 	verifyRounds?: number;
 	verifyFindings?: string;
+	blockedReason?: string;
 };
 
-export type GoalEventKind = "active" | "continuation" | "paused" | "resumed" | "cleared" | "budget_limited" | "complete";
+export type GoalEventKind = "active" | "continuation" | "paused" | "resumed" | "cleared" | "budget_limited" | "complete" | "blocked";
+
+const VERDICTS = ["pass", "fail", "genuine", "premature"] as const;
 
 export type VerifyReport = {
-	verdict: "pass" | "fail";
+	verdict: (typeof VERDICTS)[number];
 	gaps: string[];
 };
 
@@ -116,14 +119,14 @@ export function parseGoalArgs(input: string): ParseGoalArgsResult {
 	return { objective: rest, tokenBudget: base.tokenBudget, verify };
 }
 
-function tryParseVerdict(candidate: string): VerifyReport | null {
+function tryParseVerdict(candidate: string, verdicts: readonly string[]): VerifyReport | null {
 	let raw: any;
 	try {
 		raw = JSON.parse(candidate);
 	} catch {
 		return null;
 	}
-	if (raw?.verdict !== "pass" && raw?.verdict !== "fail") return null;
+	if (typeof raw?.verdict !== "string" || !verdicts.includes(raw.verdict)) return null;
 	const gaps = Array.isArray(raw.gaps)
 		? raw.gaps
 			.filter((gap: unknown) => gap != null)
@@ -137,18 +140,20 @@ function tryParseVerdict(candidate: string): VerifyReport | null {
 
 // Parse the verifier's final message into a VerifyReport. Fail-closed: any
 // missing, malformed, or non-conforming output becomes a fail with a gap.
-export function parseVerdict(text: string): VerifyReport {
+// `verdicts` narrows the accepted verdict vocabulary (e.g. genuine/premature
+// for blocked-claim audits).
+export function parseVerdict(text: string, verdicts: readonly string[] = VERDICTS): VerifyReport {
 	const trimmed = (text ?? "").trim();
 	if (!trimmed) return { verdict: "fail", gaps: ["Verifier returned no output."] };
 	const fences = [...trimmed.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/g)];
 	for (let i = fences.length - 1; i >= 0; i--) {
-		const report = tryParseVerdict(fences[i][1].trim());
+		const report = tryParseVerdict(fences[i][1].trim(), verdicts);
 		if (report) return report;
 	}
 	const start = trimmed.indexOf("{");
 	const end = trimmed.lastIndexOf("}");
 	if (start !== -1 && end > start) {
-		const report = tryParseVerdict(trimmed.slice(start, end + 1));
+		const report = tryParseVerdict(trimmed.slice(start, end + 1), verdicts);
 		if (report) return report;
 	}
 	return { verdict: "fail", gaps: [`Verifier output unparseable: ${truncateObjective(trimmed, 200)}`] };
@@ -174,6 +179,7 @@ export function statusLine(state: GoalState | null): string | undefined {
 	const budget = state.tokenBudget ? ` (${formatTokens(state.tokensUsed)} / ${formatTokens(state.tokenBudget)})` : ` (${formatElapsed(state.timeUsedSeconds)})`;
 	if (state.status === "active") return `Pursuing goal${budget}`;
 	if (state.status === "paused") return "Goal paused (/goal resume)";
+	if (state.status === "blocked") return "Goal blocked (/goal clear or /goal resume)";
 	if (state.status === "budget_limited") return state.tokenBudget ? `Goal unmet${budget}` : "Goal abandoned";
 	return `Goal achieved${budget}`;
 }
@@ -197,6 +203,7 @@ export function goalEventStatus(kind: GoalEventKind): string {
 		cleared: "cleared",
 		budget_limited: "budget reached",
 		complete: "achieved",
+		blocked: "blocked",
 	};
 	return labels[kind];
 }

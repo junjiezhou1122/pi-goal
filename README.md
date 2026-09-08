@@ -48,7 +48,7 @@ The same Pi agent keeps running normal turns in the same session context until i
 - `/goal statusbar on|off`: show or hide the footer status line
 - `create_goal` tool: model can set or replace the current goal only when explicitly requested
 - `get_goal` tool: read current goal state
-- `update_goal` tool: model requests completion; an independent verifier audits the objective in an isolated process before the goal is marked complete
+- `update_goal` tool: model requests completion or reports blocked; both requests are audited by an independent verifier in an isolated process before they take effect
 - `get_goal` and `update_goal` are only exposed to the model while a goal is `active`; paused, cleared, complete, and budget-limited goals hide them so unrelated sessions are not tempted to call them
 - footer status: `Pursuing goal`, `Goal paused`, `Goal achieved`, or `Goal unmet`
 
@@ -70,6 +70,8 @@ The same Pi agent keeps running normal turns in the same session context until i
 The model is instructed to audit completion against real evidence before calling `update_goal`. Calling `update_goal` is a completion request, not a declaration: the extension spawns an isolated `pi` process (`--mode json -p --no-session --no-extensions`) that re-derives the requirements from the objective and audits the workspace with fresh evidence. Only a `pass` verdict marks the goal complete.
 
 On rejection, the goal stays active, the unmet gaps are returned to the model as tool output, and subsequent continuation prompts re-inject them until the next verification. After the configured verification rounds are exhausted, the goal is paused and the user decides (resume grants fresh attempts; `--verify 0` disables verification entirely). Verification flags are parsed from `/goal` arguments only; the `create_goal` tool schema deliberately does not accept them, so the model can never weaken its own completion gate. The final turn is still accounted even when the model completes the goal mid-turn.
+
+The model can also declare a goal blocked with `update_goal({ status: "blocked", reason })` when it has verified that no useful work remains (missing credentials, user-only decisions, or a proven impossibility). Blocked claims get the same independent audit: `genuine` blocks the goal and notifies the user, while `premature` returns the concrete remaining work the auditor found. Both claim types share the same verification limit, and the continuation prompt tells the model the blocked escape hatch exists so impossible goals stop instead of looping. Uncertainty resolves to premature.
 
 Verification flags:
 
