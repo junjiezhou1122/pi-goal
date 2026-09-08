@@ -1,7 +1,7 @@
 {
   "name": "@junjiezhou1122/pi-goal",
   "version": "0.2.1",
-  "description": "Persistent autonomous goals for pi — /goal loops until complete, paused, or budget-limited",
+  "description": "Persistent autonomous goals for pi \u2014 /goal loops until complete, paused, or budget-limited",
   "type": "commonjs",
   "keywords": [
     "pi-package",
@@ -40,5 +40,13 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/junjiezhou1122/pi-goal.git"
+  },
+  "homepage": "https://github.com/junjiezhou1122/pi-goal#readme",
+  "bugs": {
+    "url": "https://github.com/junjiezhou1122/pi-goal/issues"
   }
 }
