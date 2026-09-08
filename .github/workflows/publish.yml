@@ -1,0 +1,58 @@
+name: Publish to npm
+
+# Publishes when package.json version differs from the npm registry.
+# Bump version (npm version patch/minor/major), push, done — CI does the rest.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing (OIDC) — no NPM_TOKEN secret needed
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Ensure npm supports trusted publishing
+        if: steps.version.outputs.publish == 'true'
+        run: npm install -g npm@latest
+
+      - name: Detect version change
+        id: version
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          LOCAL=$(node -p "require('./package.json').version")
+          REMOTE=$(npm view "$NAME" version 2>/dev/null || echo "")
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "Version $LOCAL is already on npm — nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will publish $NAME@$LOCAL (registry currently has: ${REMOTE:-nothing})"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.version.outputs.publish == 'true'
+        run: npm install
+
+      - name: Run tests
+        if: steps.version.outputs.publish == 'true'
+        run: npm test
+
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        run: npm publish
