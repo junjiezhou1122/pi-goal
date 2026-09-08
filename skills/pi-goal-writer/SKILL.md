@@ -11,6 +11,8 @@ Write `/goal` prompts that are fit for persistent autonomous work. A goal is not
 
 Use this skill for Pi `pi-goal` first. The same goal-writing principles also apply to Codex Goal mode and compatible `/goal` workflows.
 
+Note for pi-goal forks with the independent verifier: every completion (and blocked) claim is audited by a fresh verifier process that has no context except the objective and the workspace. Write the goal so such a stranger could judge it: name concrete artifacts, commands, and success evidence in the objective itself. Also give the agent an honest out — a blocked stop condition it can prove (missing credentials, user-only decisions) — since blocked claims are independently audited too (genuine ends the goal; premature returns it to work).
+
 ## Core rule
 
 Never produce a vague goal such as “make this better,” “finish the feature,” or “improve the codebase.” Turn the user’s rough intent into a goal with auditable completion criteria.
@@ -64,6 +66,8 @@ Before returning a goal, verify it answers:
 
 - Can the agent tell when it is done?
 - Can the user independently audit that completion claim?
+- Could a verifier with zero prior context — only the objective text and the workspace — audit every requirement from scratch? (Name exact files, commands, and expected evidence.)
+- If the work turns out infeasible, can the agent prove the blocker with evidence a verifier can check? (Missing credentials, user-only decisions, mathematical impossibility.)
 - Are regressions and forbidden approaches named?
 - Does the goal allow iteration without inviting unlimited drift?
 - Does it define what to do when tests, credentials, network, data, or product decisions block progress?

@@ -4,19 +4,21 @@
 
 Persistent autonomous goals for [pi](https://github.com/badlogic/pi-mono).
 
-`pi-goal` adds a `/goal` command and goal tools so Pi can keep working toward a long-running, thread-scoped objective until the goal is complete, paused, cleared, or token-budget-limited.
+`pi-goal` adds a `/goal` command and goal tools so Pi can keep working toward a long-running, thread-scoped objective until the goal is complete, blocked, paused, cleared, or token-budget-limited — and **no completion or blocked claim counts unless an independent verifier process confirms it against fresh evidence**.
 
 ## Install
 
 ```bash
-pi install npm:pi-goal
+pi install npm:@junjiezhou1122/pi-goal
 ```
 
 Or from git:
 
 ```bash
-pi install git:github.com/Michaelliv/pi-goal
+pi install git:github.com/junjiezhou1122/pi-goal
 ```
+
+> Independent fork of `Michaelliv/pi-goal` (MIT), extended with an audited completion/blocked gate. Upstream stays at `Michaelliv/pi-goal`.
 
 ## Usage
 
@@ -40,7 +42,7 @@ The same Pi agent keeps running normal turns in the same session context until i
 ## What it adds
 
 - `pi-goal-writer` skill: draft and review strong `/goal` objectives with evidence-based success criteria
-- `/goal [--tokens 50k] <objective>`: set or replace a goal
+- `/goal [--tokens 50k] [--verify 3] <objective>`: set or replace a goal (verify flags below)
 - `/goal` or `/goal status`: show the current goal
 - `/goal pause`: stop autonomous continuation without deleting the goal
 - `/goal resume`: reactivate a paused goal
@@ -50,7 +52,7 @@ The same Pi agent keeps running normal turns in the same session context until i
 - `get_goal` tool: read current goal state
 - `update_goal` tool: model requests completion or reports blocked; both requests are audited by an independent verifier in an isolated process before they take effect
 - `get_goal` and `update_goal` are only exposed to the model while a goal is `active`; paused, cleared, complete, and budget-limited goals hide them so unrelated sessions are not tempted to call them
-- footer status: `Pursuing goal`, `Goal paused`, `Goal achieved`, or `Goal unmet`
+- footer status: `Pursuing goal`, `Goal paused`, `Goal blocked`, `Goal achieved`, or `Goal unmet`
 
 ## Flow
 
@@ -62,7 +64,14 @@ The same Pi agent keeps running normal turns in the same session context until i
   -> trigger an agent turn
   -> account time/tokens on turn_end
   -> queue another continuation on agent_end while active
-  -> stop when update_goal marks complete, user pauses/clears, or budget is hit
+  -> model calls update_goal({ status: "complete" | "blocked" })
+       -> extension spawns an isolated verifier process
+            pass / genuine   -> request lands (complete / blocked)
+            fail / premature -> goal stays active, findings returned as tool
+                                output and re-injected by every continuation
+  -> stop when the verifier grants a claim, user pauses/clears,
+     verification rounds are exhausted (goal paused for user review),
+     or the token budget is hit
 ```
 
 ## Completion behavior
@@ -82,7 +91,11 @@ Verification flags:
 
 ## State
 
-Goal state is stored as Pi custom session entries with `customType: "pi-goal"`. It follows the active session branch, survives reloads, and does not require an external database.
+Goal state is stored as Pi custom session entries with `customType: "pi-goal"` (schema `version: 2`). It follows the active session branch, survives reloads, and does not require an external database. v1 entries from older sessions load as-is; verification fields (`verify`, `verifyRounds`, `verifyFindings`, `blockedReason`) default sensibly when absent.
+
+## Credits
+
+Forked from [Michaelliv/pi-goal](https://github.com/Michaelliv/pi-goal); the independent verifier, blocked verdict, and auto-release pipeline are this fork's additions.
 
 ## License
 
