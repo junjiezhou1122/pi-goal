@@ -87,3 +87,8 @@ Goal state is stored as Pi custom session entries with `customType: "pi-goal"`. 
 ## License
 
 MIT
+
+## Links
+
+- npm: [@junjiezhou1122/pi-goal](https://www.npmjs.com/package/@junjiezhou1122/pi-goal)
+- Issues: https://github.com/junjiezhou1122/pi-goal/issues
