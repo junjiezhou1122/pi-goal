@@ -6,12 +6,15 @@ const jiti = createJiti(__filename);
 const {
 	accountGoalTurn,
 	createGoalState,
+	DEFAULT_VERIFY,
 	formatElapsed,
 	formatTokens,
 	goalEventStatus,
 	goalUsage,
 	normalizeTokenBudget,
+	parseGoalArgs,
 	parseTokenBudget,
+	parseVerdict,
 	statusLine,
 	truncateObjective,
 } = jiti("../.pi/extensions/pi-goal/goal-state.ts");
@@ -120,7 +123,7 @@ test("goalEventStatus maps event kinds to display labels", () => {
 
 test("createGoalState creates a deterministic active goal when time and random are supplied", () => {
 	assert.deepEqual(createGoalState("ship it", 123, 42, 0.5), {
-		version: 1,
+		version: 2,
 		id: "42-8",
 		objective: "ship it",
 		status: "active",
@@ -130,6 +133,14 @@ test("createGoalState creates a deterministic active goal when time and random a
 		createdAt: 42,
 		updatedAt: 42,
 	});
+});
+
+test("createGoalState attaches verify config when supplied", () => {
+	const verify = { maxRounds: 0, model: "x/y", tools: ["read", "bash"], cwd: "/tmp" };
+	const goal = createGoalState("ship it", null, 42, 0.5, verify);
+	assert.equal(goal.version, 2);
+	assert.deepEqual(goal.verify, verify);
+	assert.deepEqual(DEFAULT_VERIFY, { maxRounds: 3, model: null, tools: null, cwd: null });
 });
 
 test("accountGoalTurn adds usage and marks active budgeted goals budget-limited", () => {
@@ -163,4 +174,92 @@ test("accountGoalTurn clamps negative usage deltas", () => {
 		timeUsedSeconds: 0,
 		updatedAt: 55,
 	});
+});
+
+test("parseGoalArgs defaults to verification with 3 rounds", () => {
+	assert.deepEqual(parseGoalArgs("ship the thing"), {
+		objective: "ship the thing",
+		tokenBudget: null,
+		verify: { maxRounds: 3, model: null, tools: null, cwd: null },
+	});
+});
+
+test("parseGoalArgs accepts all verify flags alongside tokens", () => {
+	assert.deepEqual(parseGoalArgs("--tokens 50k --verify 1 --verify-model openai/gpt-4o --verify-tools read,bash --verify-cwd /tmp/repo ship it"), {
+		objective: "ship it",
+		tokenBudget: 50_000,
+		verify: { maxRounds: 1, model: "openai/gpt-4o", tools: ["read", "bash"], cwd: "/tmp/repo" },
+	});
+});
+
+test("parseGoalArgs supports equals form and inline flags", () => {
+	assert.deepEqual(parseGoalArgs("--verify=0 finish migration fast"), {
+		objective: "finish migration fast",
+		tokenBudget: null,
+		verify: { maxRounds: 0, model: null, tools: null, cwd: null },
+	});
+	assert.deepEqual(parseGoalArgs("finish --verify 2 --tokens=10k it"), {
+		objective: "finish it",
+		tokenBudget: 10_000,
+		verify: { maxRounds: 2, model: null, tools: null, cwd: null },
+	});
+});
+
+test("parseGoalArgs reports invalid verify rounds and preserves the input", () => {
+	assert.deepEqual(parseGoalArgs("ship --verify soon"), {
+		objective: "ship --verify soon",
+		tokenBudget: null,
+		verify: null,
+		error: "--verify must be a non-negative integer (0 disables verification).",
+	});
+	assert.deepEqual(parseGoalArgs("ship --verify -1"), {
+		objective: "ship --verify -1",
+		tokenBudget: null,
+		verify: null,
+		error: "--verify must be a non-negative integer (0 disables verification).",
+	});
+});
+
+test("parseGoalArgs reports empty verify-tools", () => {
+	assert.deepEqual(parseGoalArgs("ship --verify-tools ,"), {
+		objective: "ship --verify-tools ,",
+		tokenBudget: null,
+		verify: null,
+		error: "--verify-tools must list at least one tool.",
+	});
+});
+
+test("parseGoalArgs forwards token budget errors", () => {
+	assert.deepEqual(parseGoalArgs("ship --tokens 0"), {
+		objective: "ship --tokens 0",
+		tokenBudget: null,
+		verify: null,
+		error: "Token budget must be positive.",
+	});
+});
+
+test("parseVerdict accepts bare, fenced, and embedded JSON", () => {
+	assert.deepEqual(parseVerdict('{"verdict":"pass","gaps":[]}'), { verdict: "pass", gaps: [] });
+	assert.deepEqual(parseVerdict('```json\n{"verdict":"pass","gaps":[]}\n```'), { verdict: "pass", gaps: [] });
+	assert.deepEqual(
+		parseVerdict('Audit complete.\n{"verdict":"fail","gaps":["test X still fails"]}\nEnd of report.'),
+		{ verdict: "fail", gaps: ["test X still fails"] },
+	);
+});
+
+test("parseVerdict fails closed on malformed or hostile output", () => {
+	assert.equal(parseVerdict("").verdict, "fail");
+	assert.equal(parseVerdict("   \n  ").verdict, "fail");
+	assert.equal(parseVerdict("no json here at all").verdict, "fail");
+	assert.equal(parseVerdict('{"verdict":"unqualified","gaps":[]}').verdict, "fail");
+	assert.equal(parseVerdict('{"verdict":"pass"}').verdict, "pass");
+	const unparseable = parseVerdict('{"verdict": "fail", broken');
+	assert.equal(unparseable.verdict, "fail");
+	assert.match(unparseable.gaps[0], /unparseable/);
+});
+
+test("parseVerdict normalizes gaps and synthesizes them for bare fails", () => {
+	assert.deepEqual(parseVerdict('{"verdict":"fail","gaps":[" a ", 42, {"message":"b"}, null, ""]}').gaps, ["a", "42", "b"]);
+	assert.deepEqual(parseVerdict('{"verdict":"fail"}').gaps, ["Verifier reported fail without gap details."]);
+	assert.deepEqual(parseVerdict('{"verdict":"pass","gaps":null}').gaps, []);
 });

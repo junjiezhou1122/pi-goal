@@ -1,7 +1,18 @@
 export type GoalStatus = "active" | "paused" | "budget_limited" | "complete";
 
+// Verification strength for the independent completion verifier.
+// Only the user can configure this (via /goal flags); the model cannot.
+export type GoalVerifyConfig = {
+	maxRounds: number; // max update_goal completion attempts that may run verification; 0 disables
+	model: string | null; // model for the verifier process; null = same as the session
+	tools: string[] | null; // tool allowlist for the verifier; null = all tools
+	cwd: string | null; // working directory for the verifier; null = session cwd
+};
+
+export const DEFAULT_VERIFY: GoalVerifyConfig = { maxRounds: 3, model: null, tools: null, cwd: null };
+
 export type GoalState = {
-	version: 1;
+	version: 2;
 	id: string;
 	objective: string;
 	status: GoalStatus;
@@ -10,9 +21,17 @@ export type GoalState = {
 	timeUsedSeconds: number;
 	createdAt: number;
 	updatedAt: number;
+	verify?: GoalVerifyConfig;
+	verifyRounds?: number;
+	verifyFindings?: string;
 };
 
 export type GoalEventKind = "active" | "continuation" | "paused" | "resumed" | "cleared" | "budget_limited" | "complete";
+
+export type VerifyReport = {
+	verdict: "pass" | "fail";
+	gaps: string[];
+};
 
 export function parseTokenBudget(input: string): { objective: string; tokenBudget: number | null; error?: string } {
 	const match = input.match(/(?:^|\s)--tokens(?:=|\s+)(\S+\s*[kKmM]?)(?:\s|$)/);
@@ -38,6 +57,101 @@ export function normalizeTokenBudget(value: unknown): { tokenBudget: number | nu
 		return { tokenBudget: null, error: "tokenBudget must be a positive number when provided." };
 	}
 	return { tokenBudget };
+}
+
+function stripFlagValue(input: string, flag: string): { value: string; rest: string } | null {
+	const match = input.match(new RegExp(`(?:^|\\s)--${flag}(?:=|\\s+)(\\S+)(?:\\s|$)`));
+	if (!match) return null;
+	const rest = (input.slice(0, match.index) + " " + input.slice(match.index + match[0].length)).replace(/\s+/g, " ").trim();
+	return { value: match[1], rest };
+}
+
+export type ParseGoalArgsResult = {
+	objective: string;
+	tokenBudget: number | null;
+	verify: GoalVerifyConfig | null;
+	error?: string;
+};
+
+// Parse /goal arguments: --tokens (via parseTokenBudget) plus verification flags.
+// Verification flags are intentionally absent from the create_goal tool schema so
+// the model can never weaken its own completion gate.
+export function parseGoalArgs(input: string): ParseGoalArgsResult {
+	const base = parseTokenBudget(input);
+	if (base.error) {
+		return { objective: base.objective, tokenBudget: null, verify: null, error: base.error };
+	}
+	let rest = base.objective;
+	const verify: GoalVerifyConfig = { ...DEFAULT_VERIFY };
+
+	const rounds = stripFlagValue(rest, "verify");
+	if (rounds) {
+		rest = rounds.rest;
+		const n = Number(rounds.value);
+		if (!Number.isInteger(n) || n < 0) {
+			return { objective: input.trim(), tokenBudget: null, verify: null, error: "--verify must be a non-negative integer (0 disables verification)." };
+		}
+		verify.maxRounds = n;
+	}
+	const model = stripFlagValue(rest, "verify-model");
+	if (model) {
+		rest = model.rest;
+		verify.model = model.value;
+	}
+	const tools = stripFlagValue(rest, "verify-tools");
+	if (tools) {
+		rest = tools.rest;
+		const list = tools.value.split(",").map((tool) => tool.trim()).filter(Boolean);
+		if (list.length === 0) {
+			return { objective: input.trim(), tokenBudget: null, verify: null, error: "--verify-tools must list at least one tool." };
+		}
+		verify.tools = list;
+	}
+	const cwd = stripFlagValue(rest, "verify-cwd");
+	if (cwd) {
+		rest = cwd.rest;
+		verify.cwd = cwd.value;
+	}
+
+	return { objective: rest, tokenBudget: base.tokenBudget, verify };
+}
+
+function tryParseVerdict(candidate: string): VerifyReport | null {
+	let raw: any;
+	try {
+		raw = JSON.parse(candidate);
+	} catch {
+		return null;
+	}
+	if (raw?.verdict !== "pass" && raw?.verdict !== "fail") return null;
+	const gaps = Array.isArray(raw.gaps)
+		? raw.gaps
+			.filter((gap: unknown) => gap != null)
+			.map((gap: unknown) => (typeof gap === "string" ? gap.trim() : typeof gap === "object" && gap !== null ? String((gap as any).message ?? JSON.stringify(gap)) : String(gap)))
+			.filter(Boolean)
+		: raw.verdict === "fail"
+			? ["Verifier reported fail without gap details."]
+			: [];
+	return { verdict: raw.verdict, gaps };
+}
+
+// Parse the verifier's final message into a VerifyReport. Fail-closed: any
+// missing, malformed, or non-conforming output becomes a fail with a gap.
+export function parseVerdict(text: string): VerifyReport {
+	const trimmed = (text ?? "").trim();
+	if (!trimmed) return { verdict: "fail", gaps: ["Verifier returned no output."] };
+	const fences = [...trimmed.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/g)];
+	for (let i = fences.length - 1; i >= 0; i--) {
+		const report = tryParseVerdict(fences[i][1].trim());
+		if (report) return report;
+	}
+	const start = trimmed.indexOf("{");
+	const end = trimmed.lastIndexOf("}");
+	if (start !== -1 && end > start) {
+		const report = tryParseVerdict(trimmed.slice(start, end + 1));
+		if (report) return report;
+	}
+	return { verdict: "fail", gaps: [`Verifier output unparseable: ${truncateObjective(trimmed, 200)}`] };
 }
 
 export function formatTokens(value: number): string {
@@ -87,9 +201,9 @@ export function goalEventStatus(kind: GoalEventKind): string {
 	return labels[kind];
 }
 
-export function createGoalState(objective: string, tokenBudget: number | null, now = Date.now(), random = Math.random()): GoalState {
-	return {
-		version: 1,
+export function createGoalState(objective: string, tokenBudget: number | null, now = Date.now(), random = Math.random(), verify?: GoalVerifyConfig): GoalState {
+	const state: GoalState = {
+		version: 2,
 		id: `${now}-${random.toString(16).slice(2)}`,
 		objective,
 		status: "active",
@@ -99,6 +213,8 @@ export function createGoalState(objective: string, tokenBudget: number | null, n
 		createdAt: now,
 		updatedAt: now,
 	};
+	if (verify) state.verify = verify;
+	return state;
 }
 
 export function accountGoalTurn(state: GoalState, tokenDelta: number, elapsedSeconds: number, now = Date.now()): GoalState {

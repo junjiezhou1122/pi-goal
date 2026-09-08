@@ -23,6 +23,8 @@ pi install git:github.com/Michaelliv/pi-goal
 ```text
 /goal improve benchmark coverage until the suite has strong evidence
 /goal --tokens 50k finish the migration and verify tests
+/goal --verify 3 --verify-tools read,bash,grep audit the migration
+/goal --verify 0 finish the docs rewrite
 /goal
 /goal status
 /goal pause
@@ -46,7 +48,7 @@ The same Pi agent keeps running normal turns in the same session context until i
 - `/goal statusbar on|off`: show or hide the footer status line
 - `create_goal` tool: model can set or replace the current goal only when explicitly requested
 - `get_goal` tool: read current goal state
-- `update_goal` tool: model can only mark the goal `complete`
+- `update_goal` tool: model requests completion; an independent verifier audits the objective in an isolated process before the goal is marked complete
 - `get_goal` and `update_goal` are only exposed to the model while a goal is `active`; paused, cleared, complete, and budget-limited goals hide them so unrelated sessions are not tempted to call them
 - footer status: `Pursuing goal`, `Goal paused`, `Goal achieved`, or `Goal unmet`
 
@@ -65,7 +67,16 @@ The same Pi agent keeps running normal turns in the same session context until i
 
 ## Completion behavior
 
-The model is instructed to audit completion against real evidence before calling `update_goal`. The `update_goal` tool deliberately accepts only `status: "complete"`; pausing, resuming, clearing, and budget limiting are controlled by the user or extension runtime. The final turn is still accounted even when the model completes the goal mid-turn.
+The model is instructed to audit completion against real evidence before calling `update_goal`. Calling `update_goal` is a completion request, not a declaration: the extension spawns an isolated `pi` process (`--mode json -p --no-session --no-extensions`) that re-derives the requirements from the objective and audits the workspace with fresh evidence. Only a `pass` verdict marks the goal complete.
+
+On rejection, the goal stays active, the unmet gaps are returned to the model as tool output, and subsequent continuation prompts re-inject them until the next verification. After the configured verification rounds are exhausted, the goal is paused and the user decides (resume grants fresh attempts; `--verify 0` disables verification entirely). Verification flags are parsed from `/goal` arguments only; the `create_goal` tool schema deliberately does not accept them, so the model can never weaken its own completion gate. The final turn is still accounted even when the model completes the goal mid-turn.
+
+Verification flags:
+
+- `--verify <N>`: max verification attempts (default 3; `0` disables the verifier)
+- `--verify-model <provider/id>`: model for the verifier (default: same as the session)
+- `--verify-tools <a,b,c>`: tool allowlist for the verifier (default: all tools)
+- `--verify-cwd <path>`: working directory for the verifier (default: session cwd)
 
 ## State
 

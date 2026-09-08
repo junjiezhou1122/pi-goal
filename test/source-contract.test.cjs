@@ -4,6 +4,7 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 
 const indexSource = readFileSync(join(__dirname, "../.pi/extensions/pi-goal/index.ts"), "utf8");
+const goalStateSource = readFileSync(join(__dirname, "../.pi/extensions/pi-goal/goal-state.ts"), "utf8");
 const readme = readFileSync(join(__dirname, "../README.md"), "utf8");
 
 test("create_goal tool carries strong goal-writing contract", () => {
@@ -31,6 +32,25 @@ test("update_goal remains completion-only in schema and guidance", () => {
 	assert.match(indexSource, /name: "update_goal"/);
 	assert.match(indexSource, /enum: \["complete"\]/);
 	assert.match(indexSource, /Do not use update_goal to pause, resume, abandon, or budget-limit a goal/);
+});
+
+test("update_goal runs independent verification before completing", () => {
+	assert.match(indexSource, /runVerifier\(/);
+	assert.match(indexSource, /--no-extensions/);
+	assert.match(indexSource, /Completion REJECTED by an independent verifier/);
+	assert.match(indexSource, /verification rejected completion.*goal paused|goal paused for user review/s);
+});
+
+test("verification flags are user-only and absent from create_goal", () => {
+	assert.match(goalStateSource, /--verify must be a non-negative integer/);
+	assert.match(goalStateSource, /Verification flags are intentionally absent from the create_goal tool schema/);
+	const createGoalBlock = indexSource.slice(indexSource.indexOf('name: "create_goal"'), indexSource.indexOf('name: "get_goal"'));
+	assert.doesNotMatch(createGoalBlock, /verifyRounds|verify-model|verify-tools|verify-cwd|GoalVerifyConfig/);
+});
+
+test("continuation prompt re-injects verifier findings", () => {
+	assert.match(indexSource, /Previous independent verification REJECTED a completion attempt/);
+	assert.match(indexSource, /state\.verifyFindings/);
 });
 
 test("README documents the model-set goal and completion accounting contracts", () => {
