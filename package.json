@@ -1,7 +1,7 @@
 {
   "name": "@junjiezhou1122/pi-goal",
-  "version": "0.2.1",
-  "description": "Persistent autonomous goals for pi \u2014 /goal loops until complete, paused, or budget-limited",
+  "version": "0.2.2",
+  "description": "Persistent autonomous goals for pi — /goal loops until complete, paused, or budget-limited",
   "type": "commonjs",
   "keywords": [
     "pi-package",
