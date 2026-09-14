@@ -11,3 +11,18 @@ test("persisting a non-active goal cancels any queued continuation", () => {
 		/if \(next\?\.status !== "active"\) \{\s*continuationQueued = false;\s*\}/,
 	);
 });
+
+test("agent_end pauses goal and stops continuation when run is aborted or errored", () => {
+	assert.match(
+		indexSource,
+		/if \(lastAssistant\?\.stopReason === "aborted" \|\| lastAssistant\?\.stopReason === "error"\) \{\s*persist\(pi, ctx, \{ \.\.\.goal, status: "paused", updatedAt: Date\.now\(\) \}\);\s*return;\s*\}/,
+	);
+});
+
+test("/goal pause aborts in-flight turn if agent is running", () => {
+	assert.match(
+		indexSource,
+		/if \(status === "paused" && !ctx\.isIdle\(\)\) ctx\.abort\(\);/,
+	);
+});
+

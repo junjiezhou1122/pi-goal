@@ -589,6 +589,7 @@ export default function piGoal(pi: ExtensionAPI) {
 				persist(pi, ctx, next);
 				emitGoalEvent(pi, status === "active" ? "resumed" : "paused", next);
 				if (status === "active" && ctx.isIdle()) queueContinuation(pi, next);
+				if (status === "paused" && !ctx.isIdle()) ctx.abort();
 				return;
 			}
 
@@ -666,8 +667,15 @@ export default function piGoal(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("agent_end", (_event, ctx) => {
+	pi.on("agent_end", (event, ctx) => {
 		if (!goal || goal.status !== "active" || ctx.hasPendingMessages()) return;
+		const lastAssistant = event.messages?.slice().reverse().find((m) => m.role === "assistant") as
+			| { stopReason?: string }
+			| undefined;
+		if (lastAssistant?.stopReason === "aborted" || lastAssistant?.stopReason === "error") {
+			persist(pi, ctx, { ...goal, status: "paused", updatedAt: Date.now() });
+			return;
+		}
 		queueContinuation(pi, goal);
 	});
 }
