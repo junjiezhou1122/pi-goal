@@ -28,6 +28,10 @@ let statusBarEnabled = true;
 let activeTurnStartedAt: number | null = null;
 let activeGoalThisTurnId: string | null = null;
 let continuationQueued = false;
+// Set when the last agent run ended aborted/errored. The pause itself is deferred
+// to agent_settled, because Pi decides whether to auto-retry a transient error
+// only AFTER agent_end handlers have run.
+let lastRunFailed = false;
 
 // The `content` field is what the LLM sees in the conversation history.
 // Every goal event MUST carry actionable text — never a cryptic marker.
@@ -673,9 +677,21 @@ export default function piGoal(pi: ExtensionAPI) {
 			| { stopReason?: string }
 			| undefined;
 		if (lastAssistant?.stopReason === "aborted" || lastAssistant?.stopReason === "error") {
-			persist(pi, ctx, { ...goal, status: "paused", updatedAt: Date.now() });
+			// Do not pause yet: a rate-limit/quota/capacity error is often retried by Pi
+			// itself (_handlePostAgentRun runs after this handler). Pausing here would kill
+			// a goal that Pi is about to retry successfully. agent_settled fires only once
+			// retries, compaction and queued continuation are exhausted.
+			lastRunFailed = true;
 			return;
 		}
+		lastRunFailed = false;
 		queueContinuation(pi, goal);
+	});
+
+	pi.on("agent_settled", (_event, ctx) => {
+		const failed = lastRunFailed;
+		lastRunFailed = false;
+		if (!failed || !goal || goal.status !== "active") return;
+		persist(pi, ctx, { ...goal, status: "paused", updatedAt: Date.now() });
 	});
 }

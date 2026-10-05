@@ -12,10 +12,17 @@ test("persisting a non-active goal cancels any queued continuation", () => {
 	);
 });
 
-test("agent_end pauses goal and stops continuation when run is aborted or errored", () => {
+test("agent_end defers the abort/error pause instead of stopping the goal immediately", () => {
 	assert.match(
 		indexSource,
-		/if \(lastAssistant\?\.stopReason === "aborted" \|\| lastAssistant\?\.stopReason === "error"\) \{\s*persist\(pi, ctx, \{ \.\.\.goal, status: "paused", updatedAt: Date\.now\(\) \}\);\s*return;\s*\}/,
+		/if \(lastAssistant\?\.stopReason === "aborted" \|\| lastAssistant\?\.stopReason === "error"\) \{[\s\S]*?lastRunFailed = true;\s*return;\s*\}/,
+	);
+});
+
+test("agent_settled pauses the active goal once Pi will not retry again", () => {
+	assert.match(
+		indexSource,
+		/pi\.on\("agent_settled", \(_event, ctx\) => \{\s*const failed = lastRunFailed;\s*lastRunFailed = false;\s*if \(!failed \|\| !goal \|\| goal\.status !== "active"\) return;\s*persist\(pi, ctx, \{ \.\.\.goal, status: "paused", updatedAt: Date\.now\(\) \}\);\s*\}\);/,
 	);
 });
 
