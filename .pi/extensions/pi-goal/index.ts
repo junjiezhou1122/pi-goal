@@ -28,6 +28,24 @@ let statusBarEnabled = true;
 let activeTurnStartedAt: number | null = null;
 let activeGoalThisTurnId: string | null = null;
 let continuationQueued = false;
+let consecutiveErrors = 0;
+
+function isQuotaOrRateLimitError(err: string): boolean {
+	const lower = err.toLowerCase();
+	return (
+		lower.includes("usage limit") ||
+		lower.includes("rate limit") ||
+		lower.includes("try again in") ||
+		lower.includes("quota") ||
+		lower.includes("429") ||
+		lower.includes("overloaded") ||
+		lower.includes("capacity") ||
+		lower.includes("bad request") ||
+		lower.includes("too many requests") ||
+		lower.includes("tokens per min") ||
+		lower.includes("requests per min")
+	);
+}
 
 // The `content` field is what the LLM sees in the conversation history.
 // Every goal event MUST carry actionable text — never a cryptic marker.
@@ -580,6 +598,7 @@ export default function piGoal(pi: ExtensionAPI) {
 				const status: GoalStatus = trimmed === "pause" ? "paused" : "active";
 				let next: GoalState;
 				if (status === "active") {
+					consecutiveErrors = 0;
 					// A manual resume grants a fresh set of independent verification attempts.
 					const { verifyRounds: _rounds, verifyFindings: _findings, blockedReason: _reason, ...rest } = goal;
 					next = { ...rest, status, updatedAt: now };
@@ -621,6 +640,7 @@ export default function piGoal(pi: ExtensionAPI) {
 		activeGoalThisTurnId = null;
 		// Keep create_goal available, and hide read/update tools unless there is an active goal to pursue.
 		syncGoalTools(pi);
+		consecutiveErrors = 0;
 		if (goal?.status === "active" && event.reason === "reload") {
 			// Reload pauses an active goal so it does not silently resume.
 			// We do not emit a goal event — the LLM has nothing to do here —
@@ -659,6 +679,35 @@ export default function piGoal(pi: ExtensionAPI) {
 		const elapsed = activeTurnStartedAt ? Math.max(0, Math.round((Date.now() - activeTurnStartedAt) / 1000)) : 0;
 		activeTurnStartedAt = null;
 		activeGoalThisTurnId = null;
+
+		const assistantMsg = event.message as any;
+		if (assistantMsg?.stopReason === "error") {
+			consecutiveErrors++;
+			const err = assistantMsg.errorMessage || "";
+			if (isQuotaOrRateLimitError(err)) {
+				const paused: GoalState = { ...goal, status: "paused", updatedAt: Date.now() };
+				persist(pi, ctx, paused);
+				emitGoalEvent(pi, "paused", paused);
+				ctx.ui.notify(
+					`‖ Goal paused due to model rate/quota limit: ${truncateObjective(err, 160)}\nUse /goal resume once quota is restored.`,
+					"warning",
+				);
+				return;
+			}
+			if (consecutiveErrors >= 3) {
+				const paused: GoalState = { ...goal, status: "paused", updatedAt: Date.now() };
+				persist(pi, ctx, paused);
+				emitGoalEvent(pi, "paused", paused);
+				ctx.ui.notify(
+					`‖ Goal paused after ${consecutiveErrors} consecutive errors: ${truncateObjective(err, 160)}\nUse /goal resume to continue.`,
+					"error",
+				);
+				return;
+			}
+		} else if (assistantMsg?.role === "assistant" && assistantMsg?.stopReason !== "aborted") {
+			consecutiveErrors = 0;
+		}
+
 		const tokenDelta = tokenDeltaFromUsage((event.message as { usage?: UsageSnapshot } | undefined)?.usage);
 		const next = accountGoalTurn(goal, tokenDelta, elapsed);
 		persist(pi, ctx, next);

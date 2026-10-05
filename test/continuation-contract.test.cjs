@@ -26,3 +26,18 @@ test("/goal pause aborts in-flight turn if agent is running", () => {
 	);
 });
 
+test("turn_end pauses goal on rate/quota limit errors", () => {
+	assert.match(
+		indexSource,
+		/if \(isQuotaOrRateLimitError\(err\)\) \{\s*const paused: GoalState = \{ \.\.\.goal, status: "paused"/,
+	);
+});
+
+test("turn_end pauses goal on consecutive errors (circuit breaker)", () => {
+	assert.match(
+		indexSource,
+		/if \(consecutiveErrors >= 3\) \{\s*const paused: GoalState = \{ \.\.\.goal, status: "paused"/,
+	);
+});
+
+
