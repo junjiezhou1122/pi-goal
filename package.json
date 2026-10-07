@@ -1,6 +1,6 @@
 {
   "name": "@junjiezhou1122/pi-goal",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Persistent autonomous goals for pi — /goal loops until an independent verifier confirms completion or a genuine block; audited completions, findings re-injection, auto-release",
   "type": "commonjs",
   "keywords": [
